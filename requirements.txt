@@ -1,0 +1,7 @@
+streamlit            # Web app framework
+pandas               # Data handling
+numpy                # Numerical calculations
+plotly>=5.8.0        # Interactive plots (needs ≥5.8 for fig.to_image)
+kaleido              # Plotly static image export (PNG for PDF)
+openpyxl             # Read Excel files
+reportlab            # Build PDF reports
