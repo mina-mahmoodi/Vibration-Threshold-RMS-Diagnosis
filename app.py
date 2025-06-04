@@ -5,24 +5,21 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
 
-# ---- UI: File Upload and Sheet Selection ----
-
+# ---- Upload section ----
 uploaded = st.file_uploader("Upload Excel or CSV files", accept_multiple_files=True)
 
 if uploaded:
-    # Dictionary to hold sheet choice for each Excel file
     sheet_choice = {}
+    excel_files = [f for f in uploaded if f.name.endswith(('.xls', '.xlsx'))]
 
-    # Identify Excel files and ask user for sheet selection
-    for file in uploaded:
-        if file.name.endswith(('.xls', '.xlsx')):
-            # Read sheets from Excel file
-            xls = pd.ExcelFile(file)
-            sheets = xls.sheet_names
-            sheet = st.selectbox(f"Select sheet for {file.name}", sheets, key=file.name)
-            sheet_choice[file.name] = sheet
+    # Sheet selection UI
+    for file in excel_files:
+        xls = pd.ExcelFile(file)
+        sheets = xls.sheet_names
+        selected = st.selectbox(f"Select a sheet from {file.name}", sheets, key=file.name)
+        sheet_choice[file.name] = selected
 
-    # ---- Load and process all datasets ----
+    # ---- Read all data ----
     frames = []
     labeled_data = []
 
@@ -33,51 +30,48 @@ if uploaded:
         else:
             sheet = sheet_choice.get(file.name)
             if not sheet:
-                st.warning(f"Skipping {file.name} because no sheet selected.")
                 continue
             df = pd.read_excel(file, sheet_name=sheet)
             label = f"{file.name} / {sheet}"
 
         # Check columns
-        required_cols = ['T(X)', 'T(Y)', 'T(Z)', 'X', 'Y', 'Z']
-        if not all(col in df.columns for col in required_cols):
-            st.warning(f"Skipping {label} – missing required columns.")
+        required = ['T(X)', 'T(Y)', 'T(Z)', 'X', 'Y', 'Z']
+        if not all(col in df.columns for col in required):
+            st.warning(f"{label}: Missing required columns, skipped.")
             continue
 
-        # Convert timestamp columns to datetime
+        # Convert to datetime
         df[['T(X)', 'T(Y)', 'T(Z)']] = df[['T(X)', 'T(Y)', 'T(Z)']].apply(pd.to_datetime, errors='coerce')
         df = df.dropna(subset=['T(X)', 'T(Y)', 'T(Z)'])
 
-        # Remove zero value rows in X, Y, Z
+        # Remove zero rows
         df = df[(df[['X', 'Y', 'Z']] != 0).all(axis=1)]
 
         if df.empty:
-            st.warning(f"Skipping {label} – no usable data after filtering.")
+            st.warning(f"{label}: No usable data after filtering, skipped.")
             continue
 
-        # Rename columns and select subset
         df_use = df.rename(columns={'T(X)': 't', 'X': 'x', 'Y': 'y', 'Z': 'z'})[['t', 'x', 'y', 'z']]
         frames.append(df_use)
         labeled_data.append((label, df_use))
 
     if not frames:
-        st.error("No usable datasets found.")
+        st.error("No valid data found.")
         st.stop()
 
-    # Concatenate all data
-    data = pd.concat(frames).sort_values('t').reset_index(drop=True)
+    # Combine and sort
+    combined = pd.concat(frames).sort_values('t').reset_index(drop=True)
 
-    # ---- Display dataset coverage info ----
-    st.markdown("### Dataset coverage per file/sheet:")
-    for label, df_sub in labeled_data:
-        st.markdown(f"- **{label}**: {df_sub['t'].min()} → {df_sub['t'].max()} ({len(df_sub):,} rows)")
+    # ---- Show details on page ----
+    st.markdown("### Data Coverage by File/Sheet")
+    for label, df_part in labeled_data:
+        st.markdown(f"- **{label}**: {df_part['t'].min()} → {df_part['t'].max()} ({len(df_part):,} rows)")
 
-    st.markdown(f"### Combined dataset coverage:")
-    st.markdown(f"From {data['t'].min()} to {data['t'].max()} with total {len(data):,} rows")
+    st.markdown(f"### Combined Dataset:")
+    st.markdown(f"From **{combined['t'].min()}** to **{combined['t'].max()}** with **{len(combined):,} rows**")
 
-    # --- PDF Report Generation Button ---
+    # ---- Generate PDF Report ----
     if st.button("Generate PDF Report"):
-
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter)
         styles = getSampleStyleSheet()
@@ -86,35 +80,27 @@ if uploaded:
         flow.append(Paragraph("Vibration Data Report", styles['Title']))
         flow.append(Spacer(1, 12))
 
-        # Dataset sections in PDF
-        flow.append(Paragraph("Dataset Sections:", styles['Heading2']))
-        for label, df_sub in labeled_data:
-            text = f"{label} – {df_sub['t'].min().strftime('%Y-%m-%d %H:%M:%S')} to {df_sub['t'].max().strftime('%Y-%m-%d %H:%M:%S')} " \
-                   f"({len(df_sub):,} rows)"
+        # Data section
+        flow.append(Paragraph("Dataset Summary", styles['Heading2']))
+        for label, df_part in labeled_data:
+            text = f"{label}: {df_part['t'].min().strftime('%Y-%m-%d %H:%M:%S')} → " \
+                   f"{df_part['t'].max().strftime('%Y-%m-%d %H:%M:%S')} ({len(df_part):,} rows)"
             flow.append(Paragraph(text, styles['Normal']))
         flow.append(Spacer(1, 12))
 
-        # Example threshold table (dummy example, update with your real thresholds)
-        threshold_data = [
-            ['Parameter', 'Warning Level', 'Error Level'],
+        # Example: Threshold table
+        table_data = [
+            ['Parameter', 'Warning', 'Error'],
             ['x', '0.2', '0.4'],
             ['y', '0.2', '0.4'],
             ['z', '0.2', '0.4']
         ]
-        table = Table(threshold_data)
-        flow.append(Paragraph("Vibration Thresholds:", styles['Heading2']))
+        table = Table(table_data)
+        flow.append(Paragraph("Thresholds", styles['Heading2']))
         flow.append(table)
-        flow.append(Spacer(1, 12))
-
-        # Add more report content as needed...
 
         doc.build(flow)
         pdf = buffer.getvalue()
         buffer.close()
 
-        st.download_button(
-            label="Download PDF report",
-            data=pdf,
-            file_name="vibration_report.pdf",
-            mime="application/pdf"
-        )
+        st.download_button("Download Report as PDF", data=pdf, file_name="vibration_report.pdf", mime="application/pdf")
