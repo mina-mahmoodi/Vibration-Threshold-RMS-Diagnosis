@@ -10,15 +10,10 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
                                 Table, TableStyle, Image)
 
-# ──────────────────────────────────────────────────────────────
 # Page & title
-# ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="📊 Vibration Threshold & RMS Diagnosis", layout="wide")
 st.title("📊 Vibration Threshold & RMS-Based Fault Diagnosis")
 
-# ──────────────────────────────────────────────────────────────
-# Upload / sheet selection
-# ──────────────────────────────────────────────────────────────
 uploaded = st.file_uploader("📂 Upload one or more vibration files", type=["csv", "xlsx"],
                             accept_multiple_files=True)
 
@@ -42,32 +37,33 @@ if uploaded:
         st.info("📑 Please choose a sheet for every uploaded Excel.")
         st.stop()
 
-    # ──────────────────────────────────────────────────────────
-    # Load & merge
-    # ──────────────────────────────────────────────────────────
     frames = []
+    # Keep track of file+sheet to show in report
+    file_sheet_pairs = []
+
     for file in uploaded:
         sheet = sheet_choice[file.name]
         if file.name.endswith(".csv"):
             df = pd.read_csv(file)
+            # For CSV, sheet name = "CSV Data"
+            file_sheet_pairs.append((file.name, "CSV Data"))
         else:
             df = pd.read_excel(file, sheet_name=sheet)
+            file_sheet_pairs.append((file.name, sheet))
 
         if not all(col in df.columns for col in ['T(X)', 'T(Y)', 'T(Z)', 'X', 'Y', 'Z']):
             st.warning(f"Skipping {file.name}/{sheet} (columns missing).")
             continue
 
-        # Timestamp → datetime
         df[['T(X)', 'T(Y)', 'T(Z)']] = df[['T(X)', 'T(Y)', 'T(Z)']].apply(
             pd.to_datetime, errors='coerce')
         df = df.dropna(subset=['T(X)', 'T(Y)', 'T(Z)'])
-        df = df[(df[['X', 'Y', 'Z']] != 0).all(axis=1)]  # drop all-zero rows
+        df = df[(df[['X', 'Y', 'Z']] != 0).all(axis=1)]
 
         if df.empty:
             st.warning(f"Skipping {file.name}/{sheet} – no usable rows.")
             continue
 
-        # standardise column names
         df_use = df.rename(columns={'T(X)':'t', 'X':'x', 'Y':'y', 'Z':'z'})[['t','x','y','z']]
         frames.append(df_use)
 
@@ -80,9 +76,6 @@ if uploaded:
     st.markdown(f"**Dataset coverage:** {data['t'].min()} → {data['t'].max()} "
                 f"({len(data):,} rows)")
 
-    # ──────────────────────────────────────────────────────────
-    # Percentile thresholds
-    # ──────────────────────────────────────────────────────────
     percentiles = {
         axis: {
             "warning": math.ceil(data[axis].quantile(0.85)*100)/100,
@@ -99,12 +92,9 @@ if uploaded:
         thr_cols[i].metric(f"{axis.upper()} 85 % warn", f"{percentiles[axis]['warning']:.2f}")
         thr_cols[i].metric(f"{axis.upper()} 95 % error", f"{percentiles[axis]['error']:.2f}")
 
-    # ──────────────────────────────────────────────────────────
-    # Axis selection & plotting
-    # ──────────────────────────────────────────────────────────
     plot_axis = st.selectbox("📌 Axis to plot", ['x','y','z'], index=0)
 
-    plot_df = data.iloc[::max(1, len(data)//5000)]   # down-sample if huge
+    plot_df = data.iloc[::max(1, len(data)//5000)]
     fig = px.line(plot_df, x='t', y=plot_axis,
                   title=f"{plot_axis.upper()} vibration with thresholds",
                   labels={'t':'Timestamp', plot_axis: f"{plot_axis.upper()} amplitude"})
@@ -114,9 +104,6 @@ if uploaded:
                   annotation_text="95 % error", annotation_position="top left")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ──────────────────────────────────────────────────────────
-    # RMS calculation (fixed 10-sample window) & diagnosis
-    # ──────────────────────────────────────────────────────────
     win = 10
     diag_df = data.copy()
     for axis in ['x','y','z']:
@@ -138,13 +125,8 @@ if uploaded:
     st.subheader("📋 Last 50 diagnosed rows")
     st.dataframe(diag_df[['t','x_rms','y_rms','z_rms','Diagnosis']].tail(50))
 
-    # ──────────────────────────────────────────────────────────
-    # PDF generation (threshold table + plot + diagnosis table)
-    # ──────────────────────────────────────────────────────────
     if st.button("📄 Generate PDF Report"):
-        # save plot to bytes
         plot_bytes = fig.to_image(format="png")
-
         pdf_buf = BytesIO()
         doc = SimpleDocTemplate(pdf_buf, pagesize=letter)
         styles = getSampleStyleSheet()
@@ -154,7 +136,13 @@ if uploaded:
                               styles['Title']))
         flow.append(Spacer(1,12))
 
-        # explanation
+        # Show all file/sheet pairs used in data (comma separated)
+        flow.append(Paragraph(
+            "<b>Files and sheets processed:</b><br/>" +
+            "<br/>".join([f"{fn} / Sheet: {sh}" for fn, sh in file_sheet_pairs]),
+            styles['Normal']))
+        flow.append(Spacer(1,12))
+
         flow.append(Paragraph(
             "<b>Diagnosis logic</b><br/>"
             "- RMS ≥ 85th-percentile triggers <i>warning</i>; "
@@ -165,7 +153,6 @@ if uploaded:
             styles['Normal']))
         flow.append(Spacer(1,12))
 
-        # thresholds table
         tbl_data=[["Axis","85 % Warn","95 % Error"]]
         for ax in ['x','y','z']:
             tbl_data.append([ax.upper(),
@@ -182,14 +169,12 @@ if uploaded:
         flow.append(tbl)
         flow.append(Spacer(1,12))
 
-        # embed plot image
         img = Image(BytesIO(plot_bytes))
-        img.drawHeight = 4*72   # 4 inches
-        img.drawWidth  = 6*72   # 6 inches
+        img.drawHeight = 4*72
+        img.drawWidth  = 6*72
         flow.append(img)
         flow.append(Spacer(1,12))
 
-        # last 20 diagnosis rows in a table
         diag_rows = diag_df[['t','x_rms','y_rms','z_rms','Diagnosis']].tail(20)
         pdf_table = [['Time','X RMS','Y RMS','Z RMS','Diagnosis']]
         for _,r in diag_rows.iterrows():
@@ -215,5 +200,6 @@ if uploaded:
                            data=pdf_buf,
                            file_name="vibration_report.pdf",
                            mime="application/pdf")
+
 else:
     st.info("⬆️ Upload CSV or Excel files to begin.")
