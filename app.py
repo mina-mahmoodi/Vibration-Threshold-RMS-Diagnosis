@@ -56,7 +56,7 @@ if uploaded:
         df[['T(X)', 'T(Y)', 'T(Z)']] = df[['T(X)', 'T(Y)', 'T(Z)']].apply(
             pd.to_datetime, errors='coerce')
         df = df.dropna(subset=['T(X)', 'T(Y)', 'T(Z)'])
-        df = df[(df[['X', 'Y', 'Z']] != 0).all(axis=1)]
+        df = df[(df[['X', 'Y', 'Z']] >= 0.1).all(axis=1)]
 
         if df.empty:
             st.warning(f"Skipping {file.name}/{sheet} – no usable rows.")
