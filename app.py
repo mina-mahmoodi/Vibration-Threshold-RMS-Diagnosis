@@ -90,12 +90,11 @@ if uploaded:
         thr_cols[i].metric(f"{axis.upper()} 85 % warn", f"{percentiles[axis]['warning']:.2f}")
         thr_cols[i].metric(f"{axis.upper()} 95 % error", f"{percentiles[axis]['error']:.2f}")
 
-    # User input: Which axis is axial?
-    st.subheader("📌 Select Axial Direction")
-    axial_axis = st.radio("Choose the axial direction:", ['x', 'y', 'z'], format_func=lambda a: a.upper())
-    radial_axes = [a for a in ['x', 'y', 'z'] if a != axial_axis]
+    # Add axial axis selection here
+    axial_axis = st.selectbox("📌 Select axial axis", ['x', 'y', 'z'], index=2)  # default axial=z
 
-    plot_axis = st.selectbox("📈 Axis to plot", ['x','y','z'], index=0)
+    plot_axis = st.selectbox("📌 Axis to plot", ['x','y','z'], index=0)
+
     plot_df = data.iloc[::max(1, len(data)//5000)]
     fig = px.line(plot_df, x='t', y=plot_axis,
                   title=f"{plot_axis.upper()} vibration with thresholds",
@@ -106,7 +105,6 @@ if uploaded:
                   annotation_text="95 % error", annotation_position="top left")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Compute RMS
     win = 10
     diag_df = data.copy()
     for axis in ['x','y','z']:
@@ -114,14 +112,22 @@ if uploaded:
                                              .apply(lambda v: np.sqrt(np.mean(v**2)), raw=True)
 
     def judge(row):
-        notes = []
-        for r_axis in radial_axes:
-            if row[f'{r_axis}_rms'] > percentiles[r_axis]['warning']:
-                notes.append("🔧 Radial RMS ≥ 85 % (possible unbalance/misalignment)")
+        notes=[]
+        # Determine radial axes = the two axes other than axial
+        radial_axes = [ax for ax in ['x','y','z'] if ax != axial_axis]
+
+        # Check radial RMS warning
+        if any(row[f'{ax}_rms'] > percentiles[ax]['warning'] for ax in radial_axes):
+            notes.append("🔧 Radial RMS ≥ 85 % (possible unbalance/misalignment)")
+
+        # Check axial RMS warning
         if row[f'{axial_axis}_rms'] > percentiles[axial_axis]['warning']:
             notes.append("📏 Axial RMS ≥ 85 % (possible axial load/misalignment)")
+
+        # Check looseness on radial axes only (using difference of their RMS)
         if abs(row[f'{radial_axes[0]}_rms'] - row[f'{radial_axes[1]}_rms']) > 0.2:
-            notes.append("🔩 |Radial1 - Radial2| > 0.2 (possible looseness)")
+            notes.append("🔩 |Radial axis RMS difference| > 0.2 (possible looseness)")
+
         return "✅ Normal" if not notes else "; ".join(notes)
 
     diag_df['Diagnosis'] = diag_df.apply(judge, axis=1)
@@ -136,7 +142,8 @@ if uploaded:
         styles = getSampleStyleSheet()
         flow = []
 
-        flow.append(Paragraph("Vibration Threshold and RMS Diagnosis Report", styles['Title']))
+        flow.append(Paragraph("Vibration Threshold and RMS Diagnosis Report",
+                              styles['Title']))
         flow.append(Spacer(1,12))
 
         flow.append(Paragraph(
@@ -146,16 +153,16 @@ if uploaded:
         flow.append(Spacer(1,12))
 
         flow.append(Paragraph(
-            f"<b>Diagnosis logic</b><br/>"
-            f"- Axial axis selected: <b>{axial_axis.upper()}</b><br/>"
-            "- RMS ≥ 85th-percentile triggers <i>warning</i>.<br/>"
+            "<b>Diagnosis logic</b><br/>"
+            "- RMS ≥ 85th-percentile triggers <i>warning</i>; "
+            "RMS ≥ 95th triggers <i>error</i>.<br/>"
             "- Radial high values → possible <i>unbalance/misalignment</i>.<br/>"
             "- Axial high values → possible <i>axial load/misalignment</i>.<br/>"
-            "- Difference between radial RMS > 0.2 g → possible <i>looseness</i>.",
+            "- |Radial axis RMS difference| > 0.2 g → possible <i>looseness</i>.",
             styles['Normal']))
         flow.append(Spacer(1,12))
 
-        tbl_data = [["Axis","85 % Warn","95 % Error"]]
+        tbl_data=[["Axis","85 % Warn","95 % Error"]]
         for ax in ['x','y','z']:
             tbl_data.append([ax.upper(),
                              f"{percentiles[ax]['warning']:.2f}",
