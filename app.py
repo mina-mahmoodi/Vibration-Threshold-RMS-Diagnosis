@@ -38,14 +38,12 @@ if uploaded:
         st.stop()
 
     frames = []
-    # Keep track of file+sheet to show in report
     file_sheet_pairs = []
 
     for file in uploaded:
         sheet = sheet_choice[file.name]
         if file.name.endswith(".csv"):
             df = pd.read_csv(file)
-            # For CSV, sheet name = "CSV Data"
             file_sheet_pairs.append((file.name, "CSV Data"))
         else:
             df = pd.read_excel(file, sheet_name=sheet)
@@ -92,8 +90,12 @@ if uploaded:
         thr_cols[i].metric(f"{axis.upper()} 85 % warn", f"{percentiles[axis]['warning']:.2f}")
         thr_cols[i].metric(f"{axis.upper()} 95 % error", f"{percentiles[axis]['error']:.2f}")
 
-    plot_axis = st.selectbox("📌 Axis to plot", ['x','y','z'], index=0)
+    # User input: Which axis is axial?
+    st.subheader("📌 Select Axial Direction")
+    axial_axis = st.radio("Choose the axial direction:", ['x', 'y', 'z'], format_func=lambda a: a.upper())
+    radial_axes = [a for a in ['x', 'y', 'z'] if a != axial_axis]
 
+    plot_axis = st.selectbox("📈 Axis to plot", ['x','y','z'], index=0)
     plot_df = data.iloc[::max(1, len(data)//5000)]
     fig = px.line(plot_df, x='t', y=plot_axis,
                   title=f"{plot_axis.upper()} vibration with thresholds",
@@ -104,6 +106,7 @@ if uploaded:
                   annotation_text="95 % error", annotation_position="top left")
     st.plotly_chart(fig, use_container_width=True)
 
+    # Compute RMS
     win = 10
     diag_df = data.copy()
     for axis in ['x','y','z']:
@@ -111,13 +114,14 @@ if uploaded:
                                              .apply(lambda v: np.sqrt(np.mean(v**2)), raw=True)
 
     def judge(row):
-        notes=[]
-        if row['x_rms']>percentiles['x']['warning'] or row['y_rms']>percentiles['y']['warning']:
-            notes.append("🔧 Radial RMS ≥ 85 % (possible unbalance/misalignment)")
-        if row['z_rms']>percentiles['z']['warning']:
+        notes = []
+        for r_axis in radial_axes:
+            if row[f'{r_axis}_rms'] > percentiles[r_axis]['warning']:
+                notes.append("🔧 Radial RMS ≥ 85 % (possible unbalance/misalignment)")
+        if row[f'{axial_axis}_rms'] > percentiles[axial_axis]['warning']:
             notes.append("📏 Axial RMS ≥ 85 % (possible axial load/misalignment)")
-        if abs(row['x_rms']-row['y_rms'])>0.2:
-            notes.append("🔩 |X-Y| > 0.2 (possible looseness)")
+        if abs(row[f'{radial_axes[0]}_rms'] - row[f'{radial_axes[1]}_rms']) > 0.2:
+            notes.append("🔩 |Radial1 - Radial2| > 0.2 (possible looseness)")
         return "✅ Normal" if not notes else "; ".join(notes)
 
     diag_df['Diagnosis'] = diag_df.apply(judge, axis=1)
@@ -132,11 +136,9 @@ if uploaded:
         styles = getSampleStyleSheet()
         flow = []
 
-        flow.append(Paragraph("Vibration Threshold and RMS Diagnosis Report",
-                              styles['Title']))
+        flow.append(Paragraph("Vibration Threshold and RMS Diagnosis Report", styles['Title']))
         flow.append(Spacer(1,12))
 
-        # Show all file/sheet pairs used in data (comma separated)
         flow.append(Paragraph(
             "<b>Files and sheets processed:</b><br/>" +
             "<br/>".join([f"{fn} / Sheet: {sh}" for fn, sh in file_sheet_pairs]),
@@ -144,16 +146,16 @@ if uploaded:
         flow.append(Spacer(1,12))
 
         flow.append(Paragraph(
-            "<b>Diagnosis logic</b><br/>"
-            "- RMS ≥ 85th-percentile triggers <i>warning</i>; "
-            "RMS ≥ 95th triggers <i>error</i>.<br/>"
+            f"<b>Diagnosis logic</b><br/>"
+            f"- Axial axis selected: <b>{axial_axis.upper()}</b><br/>"
+            "- RMS ≥ 85th-percentile triggers <i>warning</i>.<br/>"
             "- Radial high values → possible <i>unbalance/misalignment</i>.<br/>"
             "- Axial high values → possible <i>axial load/misalignment</i>.<br/>"
-            "- |X-RMS – Y-RMS| > 0.2 g → possible <i>looseness</i>.",
+            "- Difference between radial RMS > 0.2 g → possible <i>looseness</i>.",
             styles['Normal']))
         flow.append(Spacer(1,12))
 
-        tbl_data=[["Axis","85 % Warn","95 % Error"]]
+        tbl_data = [["Axis","85 % Warn","95 % Error"]]
         for ax in ['x','y','z']:
             tbl_data.append([ax.upper(),
                              f"{percentiles[ax]['warning']:.2f}",
