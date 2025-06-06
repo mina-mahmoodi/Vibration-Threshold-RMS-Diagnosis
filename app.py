@@ -59,8 +59,8 @@ if uploaded:
 
         df_filtered = df[(df[['X', 'Y', 'Z']] >= 0.5).all(axis=1)]
 
-        if df_filtered.empty:
-            st.warning(f"⚠️ Most vibration amplitudes are near zero in {file.name}/{sheet}. "
+        if len(df_filtered) <= 1:
+            st.warning(f"⚠️ Very few usable rows after filtering in {file.name}/{sheet}. "
                        "Using all available data for calculation.")
             df_use = df.rename(columns={'T(X)': 't', 'X': 'x', 'Y': 'y', 'Z': 'z'})[['t', 'x', 'y', 'z']]
         else:
