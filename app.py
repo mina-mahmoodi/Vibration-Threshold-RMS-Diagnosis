@@ -40,7 +40,7 @@ if uploaded:
     frames = []
     file_sheet_pairs = []
 
-    for file in uploaded:
+        for file in uploaded:
         sheet = sheet_choice[file.name]
         if file.name.endswith(".csv"):
             df = pd.read_csv(file)
@@ -56,14 +56,22 @@ if uploaded:
         df[['T(X)', 'T(Y)', 'T(Z)']] = df[['T(X)', 'T(Y)', 'T(Z)']].apply(
             pd.to_datetime, errors='coerce')
         df = df.dropna(subset=['T(X)', 'T(Y)', 'T(Z)'])
-        df = df[(df[['X', 'Y', 'Z']] >= 0.5).all(axis=1)]
 
-        if df.empty:
-            st.warning(f"Skipping {file.name}/{sheet} – no usable rows.")
+        # Try filtering zero rows
+        filtered_df = df[(df[['X', 'Y', 'Z']] >= 0.5).all(axis=1)]
+
+        if not filtered_df.empty:
+            df_use = filtered_df.rename(columns={'T(X)':'t', 'X':'x', 'Y':'y', 'Z':'z'})[['t','x','y','z']]
+        else:
+            st.warning(f"⚠️ {file.name}/{sheet}: Most of the data is less than 0.5 mm/s — using unfiltered data.")
+            df_use = df.rename(columns={'T(X)':'t', 'X':'x', 'Y':'y', 'Z':'z'})[['t','x','y','z']]
+
+        if df_use.empty:
+            st.warning(f"Skipping {file.name}/{sheet} – no usable rows even after fallback.")
             continue
 
-        df_use = df.rename(columns={'T(X)':'t', 'X':'x', 'Y':'y', 'Z':'z'})[['t','x','y','z']]
         frames.append(df_use)
+
 
     if not frames:
         st.error("❌ No usable data after filtering.")
